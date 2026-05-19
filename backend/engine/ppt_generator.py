@@ -21,17 +21,17 @@ class PPTGenerator:
             with open(input_json_path, 'r', encoding='utf-8') as f:
                 data = json.load(f)
         except Exception as e:
-            print(f"Error loading JSON: {e}")
+            sys.stderr.write(f"Error loading JSON: {e}\n")
             return False
 
         is_valid, error_msg = self.validate_json(data)
         if not is_valid:
-            print(f"JSON Validation Error: {error_msg}")
+            sys.stderr.write(f"JSON Validation Error: {error_msg}\n")
             return False
 
         template_path = data['template']
         if not os.path.exists(template_path):
-            print(f"Template not found: {template_path}")
+            sys.stderr.write(f"Template not found: {template_path}\n")
             return False
 
         if output_pptx_path is None:
@@ -43,17 +43,18 @@ class PPTGenerator:
             for slide_data in data['slides']:
                 slide_index = slide_data['slide_index']
                 if slide_index < 0 or slide_index >= len(prs.slides):
-                    print(f"Warning: slide_index {slide_index} out of range (0-{len(prs.slides)-1}). Skipping.")
+                    sys.stderr.write(f"Warning: slide_index {slide_index} out of range. Skipping.\n")
                     continue
                 
                 slide = prs.slides[slide_index]
                 self._process_slide(slide, slide_data)
 
             prs.save(output_pptx_path)
-            print(f"Successfully saved PPTX to {output_pptx_path}")
+            # Only print JSON to stdout
+            print(json.dumps({"success": True, "path": os.path.abspath(output_pptx_path)}))
             return True
         except Exception as e:
-            print(f"Error during PPTX generation: {e}")
+            sys.stderr.write(f"Error during PPTX generation: {e}\n")
             return False
 
     def _process_slide(self, slide, slide_data):
@@ -102,6 +103,7 @@ class PPTGenerator:
             for slide in prs.slides:
                 self._extract_keys_from_shapes(slide.shapes, pattern, keys)
             
+            # Only print JSON to stdout
             print(json.dumps({"keys": list(keys)}))
             return True
         except Exception as e:
@@ -130,9 +132,6 @@ class PPTGenerator:
 
 def main():
     if len(sys.argv) < 2:
-        print("Usage:")
-        print("  Generate: python3 src/ppt_generator.py generate <input_json> [output_pptx]")
-        print("  Scan:     python3 src/ppt_generator.py scan <template_pptx>")
         sys.exit(1)
 
     command = sys.argv[1]

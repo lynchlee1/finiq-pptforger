@@ -1,0 +1,16 @@
+{
+  "json_version": "1.0.0",
+  "template": "frontend/public/templates/Deal Summary.pptx",
+  "slides": [
+    {
+      "slide_index": 0,
+      "corp_name_full": "TEST CORP",
+      "mezz_type": "CB",
+      "report_date": "2026-05-19"
+    },
+    {
+      "slide_index": 1,
+      "invest_amount": "500"
+    }
+  ]
+}

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "finiq-pptforger"
-version = "0.3.3"
+version = "0.3.4"
 description = "LLM이 생성한 구조화된 JSON을 입력받아 PowerPoint 템플릿의 플레이스홀더를 자동으로 채워주는 파이썬 워크플로우"
 readme = "README.md"
 requires-python = ">=3.8"

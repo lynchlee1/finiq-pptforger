@@ -48,6 +48,3 @@ share/python-wheels/
 .installed.cfg
 *.egg
 
-# Output
-*.pptx
-!frontend/public/template_ppt.pptx

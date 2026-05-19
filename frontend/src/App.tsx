@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { Layers, Plus, FileText, Settings, Play, Download, Trash2, ChevronRight, Presentation, Sparkles, LayoutTemplate, Upload, FileJson, X } from 'lucide-react';
+import { TemplateModal } from './components/TemplateModal';
 
 interface Slide {
   id: string;
@@ -18,16 +19,17 @@ const App: React.FC = () => {
   
   // Modals state
   const [showImportModal, setShowImportModal] = useState(false);
+  const [showTemplateModal, setShowTemplateModal] = useState(false);
   const [importText, setImportText] = useState('');
 
   const selectedSlide = slides.find(s => s.id === selectedSlideId);
 
-  const handleSelectTemplate = async () => {
+  const handleTemplateSelected = async (templateName: string) => {
     try {
       // @ts-ignore
-      const result = await window.electronAPI.selectTemplate();
+      const result = await window.electronAPI.loadTemplate(templateName);
       if (result && result.success) {
-        setTemplatePath(result.path);
+        setTemplatePath(templateName);
         setTemplateKeys(result.keys);
         
         // Update all slides to include the new keys
@@ -39,7 +41,7 @@ const App: React.FC = () => {
           return { ...slide, data: newData };
         }));
         
-        alert(`Template loaded! Found keys: ${result.keys.join(', ')}`);
+        setShowTemplateModal(false);
       }
     } catch (err: any) {
       alert(`Failed to load template: ${err.message || 'Unknown error'}`);
@@ -141,6 +143,13 @@ const App: React.FC = () => {
   return (
     <div className="flex h-screen w-full bg-background text-foreground select-none overflow-hidden">
       
+      {/* Template Modal */}
+      <TemplateModal 
+        isOpen={showTemplateModal} 
+        onClose={() => setShowTemplateModal(false)} 
+        onSelect={handleTemplateSelected} 
+      />
+
       {/* Import Modal */}
       {showImportModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-sm" style={{ WebkitAppRegion: 'no-drag' } as any}>
@@ -275,7 +284,7 @@ const App: React.FC = () => {
                 Template: <span className="text-slate-800 bg-white px-2 py-1 rounded-md border border-slate-200 ml-1">{templatePath.split(/[/\\]/).pop()}</span>
               </div>
               <button 
-                onClick={handleSelectTemplate}
+                onClick={() => setShowTemplateModal(true)}
                 className="text-xs font-semibold px-3 py-1.5 bg-white border border-slate-200 rounded-md hover:bg-slate-50 text-primary flex items-center gap-1.5 shadow-sm"
               >
                 <Upload className="w-3.5 h-3.5" />

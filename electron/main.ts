@@ -1,7 +1,7 @@
 import { app, BrowserWindow, ipcMain, dialog } from 'electron'
 import { join } from 'path'
 import { spawn } from 'child_process'
-import { writeFileSync } from 'fs'
+import { writeFileSync, readdirSync } from 'fs'
 
 process.env.DIST = join(__dirname, '../dist')
 process.env.PUBLIC = app.isPackaged ? process.env.DIST : join(__dirname, '../../frontend/public')
@@ -37,7 +37,48 @@ app.on('activate', () => {
 })
 
 // IPC Handlers
+
+ipcMain.handle('list-templates', async () => {
+  const templatesDir = join(process.env.PUBLIC as string, 'templates');
+  try {
+    return readdirSync(templatesDir).filter(f => f.endsWith('.pptx'));
+  } catch (e) {
+    return [];
+  }
+});
+
+ipcMain.handle('load-template', async (_, templateName: string) => {
+  const templatePath = join(process.env.PUBLIC as string, 'templates', templateName);
+
+  return new Promise((resolve, reject) => {
+    const pythonProcess = spawn('python3', [
+      join(__dirname, '../../backend/engine/ppt_generator.py'),
+      'scan',
+      templatePath
+    ]);
+
+    let output = '';
+    pythonProcess.stdout.on('data', (data) => {
+      output += data.toString();
+    });
+
+    pythonProcess.on('close', (code) => {
+      try {
+        const parsed = JSON.parse(output);
+        if (parsed.error) {
+          reject({ success: false, message: parsed.error });
+        } else {
+          resolve({ success: true, keys: parsed.keys });
+        }
+      } catch (e) {
+        reject({ success: false, message: 'Failed to parse python output' });
+      }
+    });
+  });
+});
+
 ipcMain.handle('select-template', async () => {
+
   if (!win) return null;
   const result = await dialog.showOpenDialog(win, {
     title: 'Select PPTX Template',

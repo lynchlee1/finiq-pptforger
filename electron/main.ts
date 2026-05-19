@@ -52,15 +52,31 @@ app.on('activate', () => {
 async function runPython(args: string[]): Promise<any> {
   return new Promise((resolve, reject) => {
     const scriptPath = join(__dirname, '../../backend/engine/ppt_generator.py');
+    const venvPath = join(__dirname, '../../backend/.venv');
     
-    // Windows uses 'python', Mac/Linux typically use 'python3'
+    // Windows uses 'Scripts/python.exe', Mac/Linux uses 'bin/python'
     const isWindows = process.platform === 'win32';
-    const pythonCmd = isWindows ? 'python' : 'python3';
+    const venvPython = isWindows ? join(venvPath, 'Scripts', 'python.exe') : join(venvPath, 'bin', 'python');
+    
+    let pythonCmd = isWindows ? 'python' : 'python3';
+    
+    // Use venv if it exists
+    const fs = require('fs');
+    if (fs.existsSync(venvPython)) {
+      pythonCmd = venvPython;
+      logDebug(`USING VENV PYTHON: ${pythonCmd}`);
+    } else {
+      logDebug(`VENV NOT FOUND AT: ${venvPython}, using system python`);
+    }
     
     logDebug(`PLATFORM: ${process.platform}`);
-    logDebug(`RUNNING: ${pythonCmd} "${scriptPath}" ${args.map(a => `"${a}"`).join(' ')}`);
+    logDebug(`SCRIPT PATH: ${scriptPath}`);
+    logDebug(`ARGS: ${args.join(', ')}`);
     
-    const pythonProcess = spawn(pythonCmd, [scriptPath, ...args]);
+    const pythonProcess = spawn(pythonCmd, [scriptPath, ...args], {
+      shell: isWindows,
+      env: { ...process.env }
+    });
 
     let output = '';
     let errorOutput = '';
@@ -141,14 +157,19 @@ ipcMain.handle('list-templates', async () => {
 });
 
 ipcMain.handle('load-template', async (_, templateName: string) => {
+  logDebug(`load-template called with: ${templateName}`);
   let templatePath = templateName;
   if (!isAbsolute(templatePath)) {
-    templatePath = join(process.env.PUBLIC as string, 'templates', templateName);
+    const publicPath = process.env.PUBLIC as string;
+    logDebug(`PUBLIC path is: ${publicPath}`);
+    templatePath = join(publicPath, 'templates', templateName);
   }
+  logDebug(`Resolved template path: ${templatePath}`);
   
   try {
     const result = await runPython(['scan', templatePath]);
-    return { success: true, keys: result.keys };
+    logDebug(`Scan result: ${JSON.stringify(result).substring(0, 200)}...`);
+    return { success: true, ...result };
   } catch (err: any) {
     logDebug(`load-template failed: ${err.message}`);
     throw err;
@@ -194,3 +215,24 @@ ipcMain.handle('generate-ppt', async (_, data: any) => {
     throw err;
   }
 });
+
+ipcMain.handle('generate-preview', async (_, data: any) => {
+  try {
+    if (data.template && !isAbsolute(data.template)) {
+      data.template = join(process.env.PUBLIC as string, 'templates', data.template);
+    }
+    
+    const tempJsonPath = join(app.getPath('userData'), 'temp_preview_input.json');
+    writeFileSync(tempJsonPath, JSON.stringify(data));
+    const outputPath = join(app.getPath('userData'), `preview_temp.pptx`);
+    
+    await runPython(['generate', tempJsonPath, outputPath]);
+    
+    const buffer = require('fs').readFileSync(outputPath);
+    return { success: true, buffer: buffer };
+  } catch (err: any) {
+    logDebug(`generate-preview failed: ${err.message}`);
+    throw err;
+  }
+});
+

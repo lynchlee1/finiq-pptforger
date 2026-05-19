@@ -44,6 +44,7 @@ const App: React.FC = () => {
         setShowTemplateModal(false);
       }
     } catch (err: any) {
+      console.error('Failed to load template:', err);
       alert(`Failed to load template: ${err.message || 'Unknown error'}`);
     }
   };

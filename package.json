@@ -6,7 +6,30 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "dist:win": "npm run build && electron-builder --win",
+    "dist:mac": "npm run build && electron-builder --mac"
+  },
+  "build": {
+    "appId": "com.finiq.pptforger",
+    "productName": "Finiq PPT Forger",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "dist-electron/**/*"
+    ],
+    "win": {
+      "target": [
+        "nsis"
+      ]
+    },
+    "mac": {
+      "target": [
+        "dmg"
+      ]
+    }
   },
   "keywords": [],
   "author": "",
@@ -30,7 +53,10 @@
   },
   "dependencies": {
     "clsx": "^2.1.1",
+    "docxtemplater": "^3.68.7",
+    "exceljs": "^4.4.0",
     "lucide-react": "^1.16.0",
+    "pizzip": "^3.2.0",
     "react": "^19.2.6",
     "react-dom": "^19.2.6",
     "tailwind-merge": "^3.6.0"

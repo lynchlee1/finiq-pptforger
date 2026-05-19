@@ -7,6 +7,25 @@
   </head>
   <body>
     <div id="root"></div>
+    <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+    <script>
+      window.JSZip = window.JSZip || undefined;
+      window.onerror = function(msg, url, line, col, error) {
+        var div = document.createElement('div');
+        div.style.position = 'fixed';
+        div.style.top = '0';
+        div.style.left = '0';
+        div.style.width = '100%';
+        div.style.height = '100%';
+        div.style.backgroundColor = 'white';
+        div.style.color = 'red';
+        div.style.padding = '20px';
+        div.style.zIndex = '9999';
+        div.style.fontFamily = 'monospace';
+        div.innerHTML = '<h1>Critical Error</h1><pre>' + msg + '\n' + error + '</pre>';
+        document.body.appendChild(div);
+      };
+    </script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

@@ -1,0 +1,10 @@
+{
+  "scripts": {
+    "dev": "cd .. && npm run dev --"
+  },
+  "dependencies": {
+    "chart.js": "^4.5.1",
+    "jszip": "^3.10.1",
+    "pptxviewjs": "^1.1.9"
+  }
+}

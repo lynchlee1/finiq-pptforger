@@ -24,6 +24,7 @@ const App: React.FC = () => {
   const [isGenerating, setIsGenerating] = useState(false);
   const [isPreviewing, setIsPreviewing] = useState(false);
   const [previewError, setPreviewError] = useState<string | null>(null);
+  const [previewImageUrl, setPreviewImageUrl] = useState<string | null>(null);
   const [isAppLoading, setIsAppLoading] = useState(true);
   
   // Sidebar Widths with Persistence
@@ -44,6 +45,59 @@ const App: React.FC = () => {
   const isResizingLeft = useRef(false);
   const isResizingRight = useRef(false);
   const lastWidthUpdate = useRef<number>(0);
+
+  const drawPreviewImage = useCallback((imageUrl: string) => {
+    if (!canvasRef.current) return;
+
+    const canvas = canvasRef.current;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    const image = new Image();
+    image.onload = () => {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.fillStyle = 'white';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      const slideAspectRatio = slideDimensions.width / slideDimensions.height;
+      const imageAspectRatio = image.width / image.height;
+      let sourceLeft = 0;
+      let sourceTop = 0;
+      let sourceWidth = image.width;
+      let sourceHeight = image.height;
+
+      if (imageAspectRatio < slideAspectRatio) {
+        sourceHeight = image.width / slideAspectRatio;
+      } else if (imageAspectRatio > slideAspectRatio) {
+        sourceWidth = image.height * slideAspectRatio;
+        sourceLeft = (image.width - sourceWidth) / 2;
+      }
+
+      const scale = Math.min(canvas.width / sourceWidth, canvas.height / sourceHeight);
+      const width = sourceWidth * scale;
+      const height = sourceHeight * scale;
+      const left = (canvas.width - width) / 2;
+      const top = (canvas.height - height) / 2;
+      ctx.drawImage(image, sourceLeft, sourceTop, sourceWidth, sourceHeight, left, top, width, height);
+
+      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      const data = imageData.data;
+      for (let i = 0; i < data.length; i += 4) {
+        if (
+          Math.abs(data[i] - 172) <= 6 &&
+          Math.abs(data[i + 1] - 178) <= 6 &&
+          Math.abs(data[i + 2] - 187) <= 6
+        ) {
+          data[i] = 255;
+          data[i + 1] = 255;
+          data[i + 2] = 255;
+          data[i + 3] = 255;
+        }
+      }
+      ctx.putImageData(imageData, 0, 0);
+    };
+    image.src = imageUrl;
+  }, [slideDimensions]);
 
   useEffect(() => {
     const handleMouseMove = (e: MouseEvent) => {
@@ -189,8 +243,9 @@ const App: React.FC = () => {
           canvasRef.current.style.width = `${Math.floor(width)}px`;
           canvasRef.current.style.height = `${Math.floor(height)}px`;
 
-          // Re-render if viewer exists
-          if (viewerRef.current && !isPreviewing) {
+          if (previewImageUrl) {
+            drawPreviewImage(previewImageUrl);
+          } else if (viewerRef.current && !isPreviewing) {
             viewerRef.current.render(canvasRef.current, {
               quality: 'high',
               scale: scale
@@ -214,7 +269,7 @@ const App: React.FC = () => {
       resizeObserver.disconnect();
       cancelAnimationFrame(animationFrameId);
     };
-  }, [slideDimensions, isPreviewing]);
+  }, [slideDimensions, isPreviewing, previewImageUrl, drawPreviewImage]);
 
   
   // Modals state
@@ -399,13 +454,40 @@ const App: React.FC = () => {
       const payload = {
         json_version: "1.0.0",
         template: templatePath,
+        preview_slide_index: selectedSlide?.slide_index ?? 0,
         slides: slides.map(s => ({ slide_index: s.slide_index, ...s.data }))
       };
       
       // @ts-ignore
       const result = await window.electronAPI.generatePreview(payload);
       
-      if (result.success && result.buffer) {
+      if (result.success && result.previewMode === 'image' && result.imageBuffer) {
+        if (viewerRef.current) {
+          try {
+            viewerRef.current.destroy();
+          } catch (e) {
+            console.warn("Error destroying viewer", e);
+          }
+          viewerRef.current = null;
+        }
+
+        const imageBytes = result.imageBuffer instanceof Uint8Array
+          ? result.imageBuffer
+          : result.imageBuffer && result.imageBuffer.type === 'Buffer' && Array.isArray(result.imageBuffer.data)
+            ? new Uint8Array(result.imageBuffer.data)
+            : new Uint8Array(Object.values(result.imageBuffer));
+        const imageUrl = URL.createObjectURL(new Blob([imageBytes], { type: result.imageType || 'image/png' }));
+        setPreviewImageUrl((currentUrl) => {
+          if (currentUrl) URL.revokeObjectURL(currentUrl);
+          return imageUrl;
+        });
+        drawPreviewImage(imageUrl);
+      } else if (result.success && result.buffer) {
+        setPreviewImageUrl((currentUrl) => {
+          if (currentUrl) URL.revokeObjectURL(currentUrl);
+          return null;
+        });
+
         // Clear previous viewer if it exists to ensure fresh start
         if (viewerRef.current) {
           try {
@@ -459,7 +541,7 @@ const App: React.FC = () => {
     } finally {
       setIsPreviewing(false);
     }
-  }, [slides, templatePath, selectedSlide]);
+  }, [slides, templatePath, selectedSlide, drawPreviewImage]);
 
 
 
@@ -469,6 +551,12 @@ const App: React.FC = () => {
     }, 1000); // 1s debounce
     return () => clearTimeout(timer);
   }, [generatePreview]);
+
+  useEffect(() => {
+    return () => {
+      if (previewImageUrl) URL.revokeObjectURL(previewImageUrl);
+    };
+  }, [previewImageUrl]);
 
   return (
     <>

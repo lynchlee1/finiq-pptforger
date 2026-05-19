@@ -1,7 +1,7 @@
 import { app, BrowserWindow, ipcMain, dialog } from 'electron'
 import { join, isAbsolute } from 'path'
 import { spawn } from 'child_process'
-import { writeFileSync, readdirSync, appendFileSync } from 'fs'
+import { writeFileSync, readdirSync, appendFileSync, readFileSync, mkdirSync, rmSync } from 'fs'
 
 const debugLogPath = join(app.getPath('userData'), 'debug.log');
 function logDebug(message: string) {
@@ -147,6 +147,42 @@ async function runPython(args: string[]): Promise<any> {
   });
 }
 
+async function runProcess(command: string, args: string[]): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args);
+    let errorOutput = '';
+
+    child.stderr.on('data', (data) => {
+      errorOutput += data.toString();
+    });
+
+    child.on('error', reject);
+    child.on('close', (code) => {
+      if (code === 0) {
+        resolve();
+      } else {
+        reject(new Error(errorOutput.trim() || `${command} exited with code ${code}`));
+      }
+    });
+  });
+}
+
+async function renderQuickLookPreview(pptxPath: string, slideIndex: number) {
+  const previewDir = join(app.getPath('userData'), 'preview-render');
+  const selectedPath = join(app.getPath('userData'), 'preview_selected.pptx');
+  const imagePath = join(previewDir, 'preview_selected.pptx.png');
+  const fixedImagePath = join(previewDir, 'preview_selected.fixed.png');
+  rmSync(previewDir, { recursive: true, force: true });
+  mkdirSync(previewDir, { recursive: true });
+
+  await runPython(['move-slide-to-front', pptxPath, String(slideIndex), selectedPath]);
+  await runProcess('qlmanage', ['-t', '-s', '2400', '-o', previewDir, selectedPath]);
+  await runPython(['postprocess-preview-image', selectedPath, imagePath, fixedImagePath]);
+
+  const buffer = readFileSync(fixedImagePath);
+  return { buffer, imageType: 'image/png' };
+}
+
 ipcMain.handle('list-templates', async () => {
   const templatesDir = join(process.env.PUBLIC as string, 'templates');
   try {
@@ -240,6 +276,9 @@ ipcMain.handle('generate-ppt', async (_, data: any) => {
 
 ipcMain.handle('generate-preview', async (_, data: any) => {
   try {
+    const previewSlideIndex = Number.isInteger(data.preview_slide_index) ? data.preview_slide_index : 0;
+    delete data.preview_slide_index;
+
     if (data.template && !isAbsolute(data.template)) {
       data.template = join(process.env.PUBLIC as string, 'templates', data.template);
     }
@@ -249,9 +288,15 @@ ipcMain.handle('generate-preview', async (_, data: any) => {
     const outputPath = join(app.getPath('userData'), `preview_temp.pptx`);
     
     await runPython(['generate', tempJsonPath, outputPath]);
-    
-    const buffer = require('fs').readFileSync(outputPath);
-    return { success: true, buffer: buffer };
+
+    try {
+      const preview = await renderQuickLookPreview(outputPath, previewSlideIndex);
+      return { success: true, previewMode: 'image', imageBuffer: preview.buffer, imageType: preview.imageType };
+    } catch (previewErr: any) {
+      logDebug(`quicklook preview failed, falling back to pptxviewjs: ${previewErr.message}`);
+      const buffer = readFileSync(outputPath);
+      return { success: true, previewMode: 'pptx', buffer: buffer };
+    }
   } catch (err: any) {
     logDebug(`generate-preview failed: ${err.message}`);
     throw err;
@@ -368,4 +413,3 @@ ipcMain.handle('fetch-company-info', async (_, stockCode: string) => {
     return { success: false, error: err.message };
   }
 });
-

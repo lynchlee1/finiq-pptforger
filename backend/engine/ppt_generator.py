@@ -237,28 +237,12 @@ class PPTGenerator:
         except: pass
 
     def _style_table(self, table):
-        try:
-            table.first_row = False
-            table.first_col = False
-            table.horz_banding = False
-            table.vert_banding = False
-        except: pass
         try: self._fix_table_borders(table)
-        except: pass
-        try:
-            tbl = table._tbl
-            tblPr = tbl.find(qn('a:tblPr'))
-            if tblPr is not None:
-                tsId = tblPr.find(qn('a:tableStyleId'))
-                if tsId is not None: tblPr.remove(tsId)
         except: pass
 
         for row in table.rows:
             for cell in row.cells:
-                cell.margin_left = Inches(0.05)
-                cell.margin_right = Inches(0.05)
-                cell.margin_top = Inches(0.05)
-                cell.margin_bottom = Inches(0.05)
+                # Use original margins from template instead of forcing 0.05"
                 try:
                     if cell.fill.type == MSO_FILL.SOLID: self._flatten_color(cell.fill.fore_color)
                     else:
@@ -380,6 +364,303 @@ class PPTGenerator:
             elif shape.shape_type == 9: elements.append({"type": "line", "left": left, "top": top, "width": width, "height": height, "stroke_color": self._get_color_hex(shape.line.color) if hasattr(shape, 'line') else "#000000"})
             elif fill_color: elements.append({"type": "shape", "left": left, "top": top, "width": width, "height": height, "fill_color": fill_color})
 
+    def move_slide_to_front(self, input_pptx_path, slide_index, output_pptx_path):
+        try:
+            prs = Presentation(input_pptx_path)
+            if slide_index < 0 or slide_index >= len(prs.slides):
+                raise ValueError(f"Invalid slide index: {slide_index}")
+            slide_ids = prs.slides._sldIdLst
+            target = list(slide_ids)[slide_index]
+            slide_ids.remove(target)
+            slide_ids.insert(0, target)
+            self._force_preview_slide_fonts(prs.slides[0])
+            self._lock_preview_table_geometry(prs.slides[0])
+            prs.save(output_pptx_path)
+            print(json.dumps({"success": True, "path": os.path.abspath(output_pptx_path)}))
+            return True
+        except Exception as e:
+            sys.stderr.write(f"Error during slide reorder: {e}\n")
+            return False
+
+    def postprocess_preview_image(self, pptx_path, image_path, output_path):
+        try:
+            from PIL import Image
+
+            prs = Presentation(pptx_path)
+            slide = prs.slides[0]
+            image = Image.open(image_path).convert("RGB")
+            image = self._replace_quicklook_background(image)
+
+            table_shapes = [
+                shape for shape in slide.shapes
+                if getattr(shape, "has_table", False) and len(shape.table.rows) > 0
+            ]
+            for shape in sorted(table_shapes, key=lambda s: s.top):
+                image = self._redraw_preview_table(image, shape, prs.slide_width, prs.slide_height)
+
+            image.save(output_path)
+            print(json.dumps({"success": True, "path": os.path.abspath(output_path)}))
+            return True
+        except Exception as e:
+            sys.stderr.write(f"Error during preview image postprocess: {e}\n")
+            return False
+
+    def _replace_quicklook_background(self, image):
+        pixels = image.load()
+        width, height = image.size
+        for y in range(height):
+            for x in range(width):
+                r, g, b = pixels[x, y]
+                if abs(r - 172) <= 8 and abs(g - 178) <= 8 and abs(b - 187) <= 8:
+                    pixels[x, y] = (255, 255, 255)
+        return image
+
+    def _shape_pixel_box(self, shape, slide_width, slide_height, image_size):
+        image_width, image_height = image_size
+        left = round(shape.left / slide_width * image_width)
+        top = round(shape.top / slide_height * image_height)
+        right = round((shape.left + shape.width) / slide_width * image_width)
+        bottom = round((shape.top + shape.height) / slide_height * image_height)
+        return left, top, right, bottom
+
+    def _redraw_preview_table(self, image, shape, slide_width, slide_height):
+        from PIL import Image, ImageDraw, ImageFont
+
+        left, top, right, bottom = self._shape_pixel_box(shape, slide_width, slide_height, image.size)
+        rendered_lines = self._find_table_horizontal_lines(image, left, right, top, bottom, 1000)
+        rendered_bottom = rendered_lines[-1][1] + 3 if len(rendered_lines) >= len(shape.table.rows) + 1 else bottom
+        if rendered_bottom > bottom + 3:
+            fixed = Image.new("RGB", image.size, "white")
+            fixed.paste(image.crop((0, 0, image.size[0], top)), (0, 0))
+            fixed.paste(image.crop((0, rendered_bottom, image.size[0], image.size[1])), (0, bottom))
+            image = fixed
+
+        draw = ImageDraw.Draw(image)
+        draw.rectangle((max(0, left - 4), max(0, top - 4), min(image.size[0], right + 32), bottom + 4), fill=(255, 255, 255))
+
+        scale_x = image.size[0] / slide_width
+        scale_y = image.size[1] / slide_height
+        row_tops = [top]
+        for row in shape.table.rows:
+            row_tops.append(row_tops[-1] + round(row.height * scale_y))
+        row_tops[-1] = bottom
+
+        col_lefts = [left]
+        for col in shape.table.columns:
+            col_lefts.append(col_lefts[-1] + round(col.width * scale_x))
+        col_lefts[-1] = right
+
+        for r_idx, row in enumerate(shape.table.rows):
+            for c_idx, cell in enumerate(row.cells):
+                cell_box = (col_lefts[c_idx], row_tops[r_idx], col_lefts[c_idx + 1], row_tops[r_idx + 1])
+                fill = self._preview_cell_fill(cell)
+                draw.rectangle(cell_box, fill=fill)
+                self._draw_preview_cell_text(draw, cell, cell_box, scale_x, scale_y)
+
+        for r_idx, row in enumerate(shape.table.rows):
+            for c_idx, cell in enumerate(row.cells):
+                cell_box = (col_lefts[c_idx], row_tops[r_idx], col_lefts[c_idx + 1], row_tops[r_idx + 1])
+                self._draw_preview_cell_borders(draw, cell, cell_box, scale_x)
+        return image
+
+    def _preview_cell_fill(self, cell):
+        try:
+            solid = cell._tc.get_or_add_tcPr().find(qn('a:solidFill'))
+            if solid is not None:
+                srgb = solid.find(qn('a:srgbClr'))
+                if srgb is not None and srgb.get('val'):
+                    return self._hex_to_rgb(f"#{srgb.get('val')}")
+        except: pass
+        return (255, 255, 255)
+
+    def _preview_cell_margin(self, cell, name, default):
+        try:
+            value = cell._tc.get_or_add_tcPr().get(name)
+            return int(value) if value is not None else default
+        except: return default
+
+    def _draw_preview_cell_text(self, draw, cell, cell_box, scale_x, scale_y):
+        left, top, right, bottom = cell_box
+        mar_l = round(self._preview_cell_margin(cell, 'marL', 91440) * scale_x)
+        mar_r = round(self._preview_cell_margin(cell, 'marR', 91440) * scale_x)
+        mar_t = round(self._preview_cell_margin(cell, 'marT', 18000) * scale_y)
+        mar_b = round(self._preview_cell_margin(cell, 'marB', 18000) * scale_y)
+        x = left + mar_l
+        max_x = right - mar_r
+
+        runs = []
+        for paragraph in cell.text_frame.paragraphs:
+            for run in paragraph.runs:
+                if run.text:
+                    runs.append(run)
+        if not runs:
+            return
+
+        metrics = []
+        total_width = 0
+        max_height = 0
+        for run in runs:
+            font = self._preview_font(run)
+            bbox = draw.textbbox((0, 0), run.text, font=font)
+            width = bbox[2] - bbox[0]
+            height = bbox[3] - bbox[1]
+            metrics.append((run, font, width, height))
+            total_width += width
+            max_height = max(max_height, height)
+
+        tcPr = cell._tc.get_or_add_tcPr()
+        anchor = tcPr.get('anchor')
+        if anchor == 'ctr':
+            y = top + max(mar_t, ((bottom - top) - max_height) // 2 - 2)
+        else:
+            y = top + mar_t
+
+        for run, font, width, _ in metrics:
+            if x >= max_x:
+                break
+            color = self._preview_run_color(run)
+            draw.text((x, y), run.text, font=font, fill=color)
+            if self._preview_run_underline(run):
+                underline_y = y + max_height + 2
+                draw.line((x, underline_y, min(x + width, max_x), underline_y), fill=color, width=1)
+            x += width
+
+    def _preview_font(self, run):
+        from PIL import ImageFont
+
+        text = run.text or ""
+        bold = bool(run.font.bold)
+        if any('\uac00' <= ch <= '\ud7a3' for ch in text):
+            path = "/Applications/Microsoft PowerPoint.app/Contents/Resources/DFonts/malgunbd.ttf" if bold else "/Applications/Microsoft PowerPoint.app/Contents/Resources/DFonts/malgun.ttf"
+        else:
+            path = "/Applications/Microsoft PowerPoint.app/Contents/Resources/DFonts/Calibrib.ttf" if bold else "/Applications/Microsoft PowerPoint.app/Contents/Resources/DFonts/Calibri.ttf"
+        size_pt = run.font.size.pt if run.font.size else 11
+        size_px = max(1, round(size_pt * 2400 / 9906000 * 914400 / 72))
+        return ImageFont.truetype(path, size_px)
+
+    def _preview_run_color(self, run):
+        hex_color = self._get_color_hex(run.font.color)
+        return self._hex_to_rgb(hex_color or "#000000")
+
+    def _preview_run_underline(self, run):
+        try: return bool(run.font.underline)
+        except: return False
+
+    def _draw_preview_cell_borders(self, draw, cell, cell_box, scale_x):
+        left, top, right, bottom = cell_box
+        for tag, coords in (
+            ('a:lnL', (left, top, left, bottom)),
+            ('a:lnR', (right, top, right, bottom)),
+            ('a:lnT', (left, top, right, top)),
+            ('a:lnB', (left, bottom, right, bottom)),
+        ):
+            line = cell._tc.get_or_add_tcPr().find(qn(tag))
+            if line is None:
+                color = (191, 191, 191)
+                width = 1
+            else:
+                color = self._preview_line_color(line)
+                width = max(1, round(int(line.get('w') or 12700) * scale_x))
+            draw.line(coords, fill=color, width=width)
+
+    def _preview_line_color(self, line):
+        try:
+            solid = line.find(qn('a:solidFill'))
+            if solid is not None:
+                srgb = solid.find(qn('a:srgbClr'))
+                if srgb is not None and srgb.get('val'):
+                    return self._hex_to_rgb(f"#{srgb.get('val')}")
+        except: pass
+        return (191, 191, 191)
+
+    def _hex_to_rgb(self, hex_color):
+        value = (hex_color or "#000000").lstrip("#")
+        return tuple(int(value[i:i + 2], 16) for i in (0, 2, 4))
+
+    def _find_table_horizontal_lines(self, image, left, right, top, bottom, row_count):
+        width, height = image.size
+        x0 = max(0, left)
+        x1 = min(width, right)
+        y0 = max(0, top - 12)
+        y1 = min(height, bottom + max(bottom - top, 120))
+        if x1 <= x0 or y1 <= y0:
+            return []
+
+        threshold = max(40, int((x1 - x0) * 0.35))
+        rows = []
+        pixels = image.load()
+        for y in range(y0, y1):
+            count = 0
+            for x in range(x0, x1):
+                r, g, b = pixels[x, y]
+                if abs(r - g) < 10 and abs(g - b) < 10 and 110 <= r <= 215:
+                    count += 1
+            if count >= threshold:
+                rows.append(y)
+
+        groups = []
+        for y in rows:
+            if not groups or y > groups[-1][1] + 1:
+                groups.append([y, y])
+            else:
+                groups[-1][1] = y
+        return groups[:row_count + 1]
+
+    def _force_preview_slide_fonts(self, slide):
+        for shape in slide.shapes:
+            self._force_preview_font_in_shape(shape)
+
+    def _force_preview_font_in_shape(self, shape):
+        if shape.has_text_frame:
+            for paragraph in shape.text_frame.paragraphs:
+                for run in paragraph.runs:
+                    self._set_preview_font(run)
+        if shape.has_table:
+            for row in shape.table.rows:
+                for cell in row.cells:
+                    if cell.text_frame:
+                        for paragraph in cell.text_frame.paragraphs:
+                            for run in paragraph.runs:
+                                self._set_preview_font(run)
+        if shape.shape_type == MSO_SHAPE_TYPE.GROUP:
+            for child in shape.shapes:
+                self._force_preview_font_in_shape(child)
+
+    def _lock_preview_table_geometry(self, slide):
+        for shape in slide.shapes:
+            self._lock_table_geometry_in_shape(shape)
+
+    def _lock_table_geometry_in_shape(self, shape):
+        if shape.has_table and len(shape.table.rows) > 0:
+            total_height = shape.height
+            base_height = total_height // len(shape.table.rows)
+            used_height = 0
+            for idx, row in enumerate(shape.table.rows):
+                if idx == len(shape.table.rows) - 1:
+                    row.height = total_height - used_height
+                else:
+                    row.height = base_height
+                    used_height += base_height
+        if shape.shape_type == MSO_SHAPE_TYPE.GROUP:
+            for child in shape.shapes:
+                self._lock_table_geometry_in_shape(child)
+
+    def _set_preview_font(self, run):
+        try:
+            rPr = run.font._element
+            from pptx.oxml.xmlchemy import OxmlElement
+            for tag, typeface in (
+                ('a:latin', 'Calibri'),
+                ('a:ea', 'Malgun Gothic'),
+                ('a:cs', 'Malgun Gothic'),
+            ):
+                font_node = rPr.find(qn(tag))
+                if font_node is None:
+                    font_node = OxmlElement(tag)
+                    rPr.insert(0, font_node)
+                font_node.set('typeface', typeface)
+        except: pass
+
 def main():
     if len(sys.argv) < 2: sys.exit(1)
     command = sys.argv[1]
@@ -388,6 +669,8 @@ def main():
     generator = PPTGenerator(schema_file)
     if command == "generate": generator.generate(sys.argv[2], sys.argv[3] if len(sys.argv) > 3 else None)
     elif command == "scan": generator.scan_template(sys.argv[2])
+    elif command == "move-slide-to-front": generator.move_slide_to_front(sys.argv[2], int(sys.argv[3]), sys.argv[4])
+    elif command == "postprocess-preview-image": generator.postprocess_preview_image(sys.argv[2], sys.argv[3], sys.argv[4])
     else: generator.generate(sys.argv[1], sys.argv[2] if len(sys.argv) > 2 else None)
 
 if __name__ == "__main__": main()

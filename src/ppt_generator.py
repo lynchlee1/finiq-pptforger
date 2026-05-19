@@ -87,20 +87,72 @@ class PPTGenerator:
             if shape.shape_type == 6: # Group shape
                 self._replace_text_in_shapes(shape.shapes, placeholder, value)
 
+    def scan_template(self, template_path):
+        """Scans a PPTX file and returns a list of unique {{placeholder}} keys."""
+        if not os.path.exists(template_path):
+            print(json.dumps({"error": f"Template not found: {template_path}"}))
+            return False
+
+        keys = set()
+        import re
+        pattern = re.compile(r'\{\{([^}]+)\}\}')
+
+        try:
+            prs = Presentation(template_path)
+            for slide in prs.slides:
+                self._extract_keys_from_shapes(slide.shapes, pattern, keys)
+            
+            print(json.dumps({"keys": list(keys)}))
+            return True
+        except Exception as e:
+            print(json.dumps({"error": str(e)}))
+            return False
+
+    def _extract_keys_from_shapes(self, shapes, pattern, keys):
+        for shape in shapes:
+            if shape.has_text_frame:
+                for paragraph in shape.text_frame.paragraphs:
+                    for run in paragraph.runs:
+                        matches = pattern.findall(run.text)
+                        for match in matches:
+                            keys.add(match)
+            if shape.has_table:
+                for row in shape.table.rows:
+                    for cell in row.cells:
+                        if cell.text_frame:
+                            for paragraph in cell.text_frame.paragraphs:
+                                for run in paragraph.runs:
+                                    matches = pattern.findall(run.text)
+                                    for match in matches:
+                                        keys.add(match)
+            if shape.shape_type == 6: # Group shape
+                self._extract_keys_from_shapes(shape.shapes, pattern, keys)
+
 def main():
     if len(sys.argv) < 2:
-        print("Usage: python3 src/ppt_generator.py <input_json> [output_pptx]")
+        print("Usage:")
+        print("  Generate: python3 src/ppt_generator.py generate <input_json> [output_pptx]")
+        print("  Scan:     python3 src/ppt_generator.py scan <template_pptx>")
         sys.exit(1)
 
-    input_json = sys.argv[1]
-    output_pptx = sys.argv[2] if len(sys.argv) > 2 else None
+    command = sys.argv[1]
     
-    # Path to schema.json relative to this script
     current_dir = os.path.dirname(os.path.abspath(__file__))
     schema_file = os.path.join(current_dir, "schema.json")
-    
     generator = PPTGenerator(schema_file)
-    generator.generate(input_json, output_pptx)
+
+    if command == "generate":
+        input_json = sys.argv[2]
+        output_pptx = sys.argv[3] if len(sys.argv) > 3 else None
+        generator.generate(input_json, output_pptx)
+    elif command == "scan":
+        template_pptx = sys.argv[2]
+        generator.scan_template(template_pptx)
+    else:
+        # Backward compatibility
+        input_json = sys.argv[1]
+        output_pptx = sys.argv[2] if len(sys.argv) > 2 else None
+        generator.generate(input_json, output_pptx)
 
 if __name__ == "__main__":
     main()

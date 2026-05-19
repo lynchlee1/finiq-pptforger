@@ -1,0 +1,20 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "type": "object",
+    "properties": {
+        "json_version": { "type": "string" },
+        "template": { "type": "string" },
+        "slides": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "slide_index": { "type": "integer" }
+                },
+                "required": ["slide_index"],
+                "additionalProperties": { "type": "string" }
+            }
+        }
+    },
+    "required": ["json_version", "template", "slides"]
+}

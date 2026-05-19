@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Layers, Plus, FileText, Settings, Play, Download, Trash2, ChevronRight, Presentation, Sparkles, LayoutTemplate, Upload, FileJson, X, RefreshCw, AlertCircle } from 'lucide-react';
+import { Plus, FileText, Settings, Play, Download, ChevronRight, Presentation, Sparkles, LayoutTemplate, Upload, FileJson, X, RefreshCw, AlertCircle } from 'lucide-react';
 import { TemplateModal } from './components/TemplateModal';
 import { PPTXViewer } from 'pptxviewjs';
 
@@ -10,8 +10,11 @@ interface Slide {
 }
 
 const App: React.FC = () => {
-  const [templatePath, setTemplatePath] = useState<string>('template_ppt.pptx');
-  const [templateKeys, setTemplateKeys] = useState<string[]>(['title', 'subtitle']);
+  const [stockCode, setStockCode] = useState('');
+  const [isFetchingInfo, setIsFetchingInfo] = useState(false);
+
+  const [templatePath, setTemplatePath] = useState<string>('Deal_Summary_Template_1.0');
+  const [templateKeys, setTemplateKeys] = useState<string[]>(['corp_name_full', 'report_date']);
   const [templateStructure, setTemplateStructure] = useState<any[]>([]);
   const [slideDimensions, setSlideDimensions] = useState({ width: 9144000, height: 5143500 }); // Default 16:9 in EMUs
   const [slides, setSlides] = useState<Slide[]>([
@@ -106,7 +109,7 @@ const App: React.FC = () => {
         await new Promise(resolve => setTimeout(resolve, 800));
         
         // Timeout for handleTemplateSelected just in case it hangs
-        const templatePromise = handleTemplateSelected('template_ppt.pptx');
+        const templatePromise = handleTemplateSelected('Deal_Summary_Template_1.0');
         const timeoutPromise = new Promise((_, reject) => 
           setTimeout(() => reject(new Error('Template loading timed out')), 5000)
         );
@@ -218,6 +221,38 @@ const App: React.FC = () => {
   const [showImportModal, setShowImportModal] = useState(false);
   const [showTemplateModal, setShowTemplateModal] = useState(false);
   const [importText, setImportText] = useState('');
+
+  const handleFetchInfo = async () => {
+    if (!stockCode || stockCode.length !== 6) {
+      alert('Please enter a valid 6-digit stock code.');
+      return;
+    }
+
+    setIsFetchingInfo(true);
+    try {
+      // @ts-ignore
+      const result = await window.electronAPI.fetchCompanyInfo(stockCode);
+      if (result.success) {
+        // Update first slide with fetched info or just set general state
+        const updatedSlides = [...slides];
+        if (updatedSlides.length > 0) {
+          updatedSlides[0].data = {
+            ...updatedSlides[0].data,
+            corp_name_full: result.companyName,
+            ...result.companyData
+          };
+          setSlides(updatedSlides);
+        }
+      } else {
+        alert('Failed to fetch company info: ' + (result.error || 'Unknown error'));
+      }
+    } catch (err: any) {
+      console.error(err);
+      alert('Error fetching company info: ' + err.message);
+    } finally {
+      setIsFetchingInfo(false);
+    }
+  };
 
   const selectedSlide = slides.find(s => s.id === selectedSlideId);
 
@@ -331,42 +366,10 @@ const App: React.FC = () => {
     }
   };
 
-  const addSlide = () => {
-    const newId = Date.now().toString();
-    const newData: Record<string, string> = {};
-    templateKeys.forEach(k => newData[k] = '');
-    
-    setSlides([...slides, { id: newId, slide_index: slides.length, data: newData }]);
-    setSelectedSlideId(newId);
-  };
-
   const updateSlideData = (key: string, value: string) => {
     setSlides(slides.map(s => 
       s.id === selectedSlideId ? { ...s, data: { ...s.data, [key]: value } } : s
     ));
-  };
-
-  const addCustomField = () => {
-    const newKey = prompt("Enter new field name (e.g., 'chart_title'):");
-    if (newKey && newKey.trim() !== '') {
-      const key = newKey.trim();
-      if (!templateKeys.includes(key)) {
-        setTemplateKeys([...templateKeys, key]);
-      }
-      if (selectedSlide) {
-        updateSlideData(key, '');
-      }
-    }
-  };
-
-  const deleteSlide = (id: string) => {
-    if (slides.length <= 1) return;
-    const newSlides = slides.filter(s => s.id !== id);
-    const reindexedSlides = newSlides.map((s, idx) => ({ ...s, slide_index: idx }));
-    setSlides(reindexedSlides);
-    if (selectedSlideId === id) {
-      setSelectedSlideId(reindexedSlides[0].id);
-    }
   };
 
   const generatePPT = async () => {
@@ -467,13 +470,6 @@ const App: React.FC = () => {
     return () => clearTimeout(timer);
   }, [generatePreview]);
 
-  // Helper to extract a display title for the sidebar
-  const getSlideDisplayTitle = (data: Record<string, string>) => {
-    if (data.title) return data.title;
-    const firstVal = Object.values(data).find(v => v.trim() !== '');
-    return firstVal || 'Empty Slide';
-  };
-
   return (
     <>
       {/* App-wide Loading Screen */}
@@ -529,7 +525,7 @@ const App: React.FC = () => {
             <textarea
               value={importText}
               onChange={(e) => setImportText(e.target.value)}
-              className="w-full h-64 border border-slate-200 rounded-xl p-4 text-sm font-mono bg-slate-50 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:bg-white resize-none"
+              className="w-full h-64 border border-slate-200 rounded-xl p-4 text-sm bg-slate-50 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:bg-white resize-none"
               placeholder="[\n  {\n    &quot;title&quot;: &quot;Slide 1&quot;,\n    &quot;content&quot;: &quot;...&quot;\n  }\n]"
             />
             <div className="flex justify-end gap-3 mt-6">
@@ -567,25 +563,14 @@ const App: React.FC = () => {
               {selectedSlideId === slide.id && (
                 <div className="absolute left-0 top-0 bottom-0 w-1 bg-primary rounded-l-xl" />
               )}
-              <div className="flex items-center justify-between mb-1.5">
-                <span className={`text-[11px] font-bold uppercase tracking-wider ${selectedSlideId === slide.id ? 'text-primary' : 'text-slate-400'}`}>
-                  Slide {idx + 1}
+              <div className="flex items-center justify-between">
+                <span className={`text-sm font-bold ${selectedSlideId === slide.id ? 'text-primary' : 'text-slate-700'}`}>
+                  Page {idx + 1}
                 </span>
                 <ChevronRight className={`w-4 h-4 text-slate-300 transition-transform ${selectedSlideId === slide.id ? 'rotate-90 text-primary' : 'opacity-0 group-hover:opacity-100'}`} />
               </div>
-              <div className="truncate text-sm font-semibold text-slate-700">
-                {getSlideDisplayTitle(slide.data)}
-              </div>
             </div>
           ))}
-          
-          <button 
-            onClick={addSlide}
-            className="w-full mt-4 py-3 rounded-xl border border-dashed border-slate-300 hover:border-primary/50 hover:bg-blue-50/30 hover:text-primary flex items-center justify-center gap-2 text-sm font-medium text-slate-500 transition-all group"
-          >
-            <Plus className="w-4 h-4 group-hover:scale-110 transition-transform" />
-            Add Slide
-          </button>
         </div>
 
         <div className="p-4 border-t border-border bg-slate-50/50 shrink-0">
@@ -744,6 +729,27 @@ const App: React.FC = () => {
             </div>
 
             <div className="flex-1 overflow-y-auto p-6">
+              {/* Stock Code Fetcher */}
+              <div className="mb-8 p-4 bg-slate-50 rounded-2xl border border-slate-100 space-y-3">
+                <label className="text-[11px] font-bold text-slate-400 uppercase tracking-widest px-1">Stock Data Sync</label>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={stockCode}
+                    onChange={(e) => setStockCode(e.target.value.replace(/[^0-9]/g, '').substring(0, 6))}
+                    placeholder="Stock Code (005930)"
+                    className="flex-1 bg-white border border-slate-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/50 transition-all"
+                  />
+                  <button
+                    onClick={handleFetchInfo}
+                    disabled={isFetchingInfo || stockCode.length !== 6}
+                    className="bg-primary text-white p-2.5 rounded-xl hover:bg-blue-700 disabled:opacity-50 transition-all shadow-sm"
+                  >
+                    {isFetchingInfo ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
+                  </button>
+                </div>
+              </div>
+
               {selectedSlide ? (
                 <div className="space-y-6">
                   {/* Ensure all templateKeys and relevant keys for this slide are rendered */}
@@ -763,27 +769,6 @@ const App: React.FC = () => {
                       />
                     </div>
                   ))}
-                  
-                  <div className="pt-4">
-                    <button 
-                      onClick={addCustomField}
-                      className="w-full py-3.5 px-4 rounded-xl border border-dashed border-slate-300 hover:border-primary/50 bg-slate-50 hover:bg-blue-50/50 text-sm font-medium text-slate-600 hover:text-primary flex items-center justify-center gap-2 transition-all"
-                    >
-                      <Plus className="w-4 h-4" />
-                      Add Custom Field
-                    </button>
-                  </div>
-                  
-                  <div className="pt-8 mt-8 border-t border-slate-100">
-                     <button 
-                       onClick={() => deleteSlide(selectedSlide.id)}
-                       disabled={slides.length <= 1}
-                       className="flex items-center justify-center gap-2 w-full py-2.5 rounded-lg text-sm font-medium text-red-500 hover:bg-red-50 disabled:opacity-40 disabled:hover:bg-transparent transition-colors"
-                     >
-                        <Trash2 className="w-4 h-4" />
-                        Delete Slide
-                     </button>
-                  </div>
                 </div>
               ) : (
                 <div className="h-full flex flex-col items-center justify-center text-center space-y-3 opacity-60">

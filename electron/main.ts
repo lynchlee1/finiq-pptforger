@@ -150,7 +150,26 @@ async function runPython(args: string[]): Promise<any> {
 ipcMain.handle('list-templates', async () => {
   const templatesDir = join(process.env.PUBLIC as string, 'templates');
   try {
-    return readdirSync(templatesDir).filter(f => f.endsWith('.pptx'));
+    const items = readdirSync(templatesDir, { withFileTypes: true });
+    const templates = items
+      .filter(item => {
+        if (item.isFile()) {
+          return item.name.endsWith('.pptx');
+        }
+        if (item.isDirectory()) {
+          // Check if directory contains at least one .pptx file
+          const dirPath = join(templatesDir, item.name);
+          try {
+            const files = readdirSync(dirPath);
+            return files.some(f => f.endsWith('.pptx') && !f.startsWith('~$'));
+          } catch (e) {
+            return false;
+          }
+        }
+        return false;
+      })
+      .map(item => item.name);
+    return templates;
   } catch (e) {
     return [];
   }
@@ -179,9 +198,12 @@ ipcMain.handle('load-template', async (_, templateName: string) => {
 ipcMain.handle('select-template', async () => {
   if (!win) return null;
   const result = await dialog.showOpenDialog(win, {
-    title: 'Select PPTX Template',
-    filters: [{ name: 'PowerPoint', extensions: ['pptx'] }],
-    properties: ['openFile']
+    title: 'Select PPTX Template (File or Folder)',
+    filters: [
+      { name: 'PowerPoint', extensions: ['pptx'] },
+      { name: 'Folders', extensions: ['*'] }
+    ],
+    properties: ['openFile', 'openDirectory']
   });
 
   if (result.canceled || result.filePaths.length === 0) {
@@ -233,6 +255,117 @@ ipcMain.handle('generate-preview', async (_, data: any) => {
   } catch (err: any) {
     logDebug(`generate-preview failed: ${err.message}`);
     throw err;
+  }
+});
+
+ipcMain.handle('fetch-company-info', async (_, stockCode: string) => {
+  logDebug(`fetch-company-info called for: ${stockCode}`);
+  try {
+    // 1. Get company name from FnGuide
+    const fnguideUrl = `https://comp.fnguide.com/SVO2/ASP/SVD_main.asp?pGB=1&gicode=A${stockCode}&cID=&MenuYn=Y&ReportGB=&NewMenuID=11&stkGb=&strResearchYN=`;
+    const fnResponse = await fetch(fnguideUrl);
+    const fnHtml = await fnResponse.text();
+    
+    // Simple regex to find company name
+    const nameMatch = fnHtml.match(/<h1[^>]*id="giName"[^>]*>([^<]+)<\/h1>/i) || fnHtml.match(/<title>([^|]+)\|/i);
+    let companyName = nameMatch ? nameMatch[1].trim() : '';
+    
+    if (!companyName) {
+      logDebug('Failed to extract company name from FnGuide');
+      // Fallback or try KIND search directly with stockCode
+    }
+    logDebug(`Extracted company name: ${companyName}`);
+
+    // 2. Search in KIND to get IDs
+    const kindSearchUrl = 'https://kind.krx.co.kr/common/searchcorpname.do';
+    const searchBody = new URLSearchParams();
+    searchBody.append('method', 'searchCorpNameJson');
+    searchBody.append('isurCd', '');
+    searchBody.append('kisComCd', '');
+    searchBody.append('repIsuCd', '');
+    searchBody.append('mode', '');
+    searchBody.append('tabMenu', '0');
+    searchBody.append('companyNM', '');
+    searchBody.append('searchCodeType', '');
+    searchBody.append('searchCorpName', stockCode); // Search by stock code to be more precise
+    searchBody.append('spotIsuTrdMktTpCd', '');
+    searchBody.append('comAttrTpCd', '');
+    searchBody.append('comAbbrv', '');
+
+    const kindSearchResponse = await fetch(kindSearchUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: searchBody.toString()
+    });
+    
+    const kindSearchResults = await kindSearchResponse.json();
+    if (!kindSearchResults || kindSearchResults.length === 0) {
+      throw new Error(`Company not found in KIND for stock code ${stockCode}`);
+    }
+
+    const corpInfo = kindSearchResults[0];
+    const { isurcd, kiscomcd, repisucd, repisusrtkornm } = corpInfo;
+    companyName = repisusrtkornm; // Use KIND's official name
+
+    // 3. Fetch Total Info from KIND
+    const kindInfoUrl = 'https://kind.krx.co.kr/corpdetail/totalinfo.do';
+    const infoBody = new URLSearchParams();
+    infoBody.append('method', 'searchTotalInfo');
+    infoBody.append('isurCd', isurcd);
+    infoBody.append('kisComCd', kiscomcd);
+    infoBody.append('repIsuCd', repisucd);
+    infoBody.append('mode', '');
+    infoBody.append('tabMenu', '0');
+    // Note: KIND treats empty string and omitted fields differently as per user hint.
+    // Explicitly sending empty strings for these fields.
+    infoBody.append('companyNM', encodeURIComponent(companyName));
+    infoBody.append('searchCodeType', '');
+    infoBody.append('searchCorpName', companyName);
+    infoBody.append('spotIsuTrdMktTpCd', corpInfo.spotisutrdmkttpcd || '1');
+    infoBody.append('comAttrTpCd', corpInfo.comAttrTpCd || '1');
+    infoBody.append('comAbbrv', companyName);
+
+    const kindInfoResponse = await fetch(kindInfoUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: infoBody.toString()
+    });
+    
+    const kindInfoHtml = await kindInfoResponse.text();
+    
+    // Parse KIND Info HTML (extracting common fields)
+    const extractField = (label: string) => {
+      // Look for the label within th, then get the following td content
+      const regex = new RegExp(`<th[^>]*>[^<]*${label}[^<]*<\\/th>\\s*<td[^>]*>([^<]*)<\\/td>`, 'i');
+      const match = kindInfoHtml.match(regex);
+      return match ? match[1].trim().replace(/&nbsp;/g, ' ') : '';
+    };
+
+    const companyData = {
+      corp_name_en: extractField('영문명'),
+      establishment_date: extractField('설립일'),
+      representative: extractField('대표이사'),
+      listing_date: extractField('상장일'),
+      capital: extractField('자본금'),
+      employees: extractField('종업원수'),
+      fiscal_month: extractField('결산월'),
+      phone: extractField('전화번호'),
+      industry: extractField('업종'),
+      main_products: extractField('주요제품'),
+      address: extractField('주소'),
+      homepage: extractField('홈페이지')
+    };
+
+    logDebug(`Fetched company data: ${JSON.stringify(companyData).substring(0, 100)}...`);
+
+    return {
+      success: true,
+      companyName,
+      companyData
+    };
+  } catch (err: any) {
+    logDebug(`fetch-company-info failed: ${err.message}`);
+    return { success: false, error: err.message };
   }
 });
 

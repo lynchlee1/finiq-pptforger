@@ -10,16 +10,15 @@
     "strict": true,
     "forceConsistentCasingInFileNames": true,
     "module": "ESNext",
-    "moduleResolution": "Node",
+    "moduleResolution": "Bundler",
     "resolveJsonModule": true,
     "isolatedModules": true,
     "noEmit": true,
     "jsx": "react-jsx",
-    "baseUrl": ".",
     "paths": {
-      "@/*": ["renderer/src/*"]
+      "@/*": ["./frontend/src/*"]
     }
   },
-  "include": ["renderer", "main", "vite.config.ts"],
+  "include": ["frontend", "electron", "vite.config.ts"],
   "node_modules": ["node_modules"]
 }

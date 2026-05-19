@@ -4,7 +4,7 @@ import { spawn } from 'child_process'
 import { writeFileSync } from 'fs'
 
 process.env.DIST = join(__dirname, '../dist')
-process.env.PUBLIC = app.isPackaged ? process.env.DIST : join(__dirname, '../../public')
+process.env.PUBLIC = app.isPackaged ? process.env.DIST : join(__dirname, '../../frontend/public')
 
 let win: BrowserWindow | null = null
 
@@ -22,7 +22,7 @@ function createWindow() {
   if (process.env.VITE_DEV_SERVER_URL) {
     win.loadURL(process.env.VITE_DEV_SERVER_URL)
   } else {
-    win.loadFile(join(__dirname, '../renderer/index.html'))
+    win.loadFile(join(__dirname, '../../dist/index.html'))
   }
 }
 
@@ -53,7 +53,7 @@ ipcMain.handle('select-template', async () => {
 
   return new Promise((resolve, reject) => {
     const pythonProcess = spawn('python3', [
-      join(__dirname, '../../src/ppt_generator.py'),
+      join(__dirname, '../../backend/engine/ppt_generator.py'),
       'scan',
       templatePath
     ]);
@@ -88,7 +88,7 @@ ipcMain.handle('generate-ppt', async (_, data: any) => {
     writeFileSync(tempJsonPath, JSON.stringify(data))
 
     const pythonProcess = spawn('python3', [
-      join(__dirname, '../../src/ppt_generator.py'),
+      join(__dirname, '../../backend/engine/ppt_generator.py'),
       'generate',
       tempJsonPath,
       join(app.getPath('downloads'), `generated_${Date.now()}.pptx`)

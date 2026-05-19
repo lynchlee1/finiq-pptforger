@@ -5,25 +5,23 @@ import renderer from 'vite-plugin-electron-renderer'
 import { resolve } from 'path'
 
 export default defineConfig({
+  root: 'frontend',
   plugins: [
     react(),
     electron([
       {
-        entry: 'main/index.ts',
+        entry: resolve(__dirname, 'electron/main.ts'),
         vite: {
           build: {
-            outDir: 'dist-electron/main',
+            outDir: resolve(__dirname, 'dist-electron/main'),
           },
         },
       },
       {
-        entry: 'main/preload.ts',
-        onready(options) {
-          options.reload()
-        },
+        entry: resolve(__dirname, 'electron/preload.ts'),
         vite: {
           build: {
-            outDir: 'dist-electron/main',
+            outDir: resolve(__dirname, 'dist-electron/main'),
           },
         },
       },
@@ -32,7 +30,11 @@ export default defineConfig({
   ],
   resolve: {
     alias: {
-      '@': resolve(__dirname, 'renderer/src'),
+      '@': resolve(__dirname, 'frontend/src'),
     },
   },
+  build: {
+    outDir: '../dist',
+    emptyOutDir: true,
+  }
 })

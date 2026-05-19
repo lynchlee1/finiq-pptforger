@@ -138,7 +138,7 @@ def main():
     command = sys.argv[1]
     
     current_dir = os.path.dirname(os.path.abspath(__file__))
-    schema_file = os.path.join(current_dir, "schema.json")
+    schema_file = os.path.join(current_dir, "../../shared/schema.json")
     generator = PPTGenerator(schema_file)
 
     if command == "generate":

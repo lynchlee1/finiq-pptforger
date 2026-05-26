@@ -1,6 +1,6 @@
-import { app, BrowserWindow, ipcMain } from 'electron'
+import { app, BrowserWindow, ipcMain, dialog } from 'electron'
 import { join } from 'path'
-import { appendFileSync } from 'fs'
+import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'fs'
 
 const debugLogPath = join(app.getPath('userData'), 'debug.log');
 function logDebug(message: string) {
@@ -16,6 +16,28 @@ process.env.DIST = join(__dirname, '../dist')
 process.env.PUBLIC = app.isPackaged ? process.env.DIST : join(__dirname, '../../frontend/public')
 
 let win: BrowserWindow | null = null
+
+const settingsPath = join(app.getPath('userData'), 'settings.json');
+const defaultTemplateDir = () => join(process.env.PUBLIC!, 'templates/Deal_Summary_Template_1.0');
+
+function readSettings(): { templateDir?: string } {
+  try {
+    if (!existsSync(settingsPath)) return {};
+    return JSON.parse(readFileSync(settingsPath, 'utf-8'));
+  } catch (err: any) {
+    logDebug(`Failed to read settings: ${err.message}`);
+    return {};
+  }
+}
+
+function writeSettings(settings: { templateDir?: string }) {
+  mkdirSync(app.getPath('userData'), { recursive: true });
+  writeFileSync(settingsPath, JSON.stringify(settings, null, 2), 'utf-8');
+}
+
+function getTemplateDir() {
+  return readSettings().templateDir || defaultTemplateDir();
+}
 
 function createWindow() {
   logDebug('Creating window...');
@@ -47,6 +69,35 @@ app.on('activate', () => {
 })
 
 // IPC Handlers
+
+ipcMain.handle('get-template-dir', async () => {
+  return { templateDir: getTemplateDir(), defaultTemplateDir: defaultTemplateDir() };
+});
+
+ipcMain.handle('set-template-dir', async (_, templateDir: string) => {
+  const trimmed = templateDir.trim();
+  if (trimmed && (!existsSync(trimmed) || !statSync(trimmed).isDirectory())) {
+    return { success: false, error: `Template folder not found: ${trimmed}` };
+  }
+
+  writeSettings({ ...readSettings(), templateDir: trimmed || undefined });
+  return { success: true, templateDir: getTemplateDir() };
+});
+
+ipcMain.handle('select-template-dir', async () => {
+  const result = await dialog.showOpenDialog(win!, {
+    title: 'Select template folder',
+    properties: ['openDirectory'],
+  });
+
+  if (result.canceled || result.filePaths.length === 0) {
+    return { canceled: true };
+  }
+
+  const templateDir = result.filePaths[0];
+  writeSettings({ ...readSettings(), templateDir });
+  return { canceled: false, templateDir };
+});
 
 ipcMain.handle('fetch-company-info', async (_, stockCode: string) => {
   logDebug(`fetch-company-info called for: ${stockCode}`);
@@ -266,8 +317,9 @@ ipcMain.handle('read-excel-data', async (_, filePath?: string) => {
   logDebug(`read-excel-data called for: ${filePath || 'default'}`);
   try {
     const { extractPriceTrendData, extractFinancialData } = require('./excelReader');
-    const data = await extractPriceTrendData(filePath);
-    const finData = await extractFinancialData(filePath);
+    const excelPath = filePath || join(getTemplateDir(), 'Model.xlsx');
+    const data = await extractPriceTrendData(excelPath);
+    const finData = await extractFinancialData(excelPath);
     return { ...data, financialData: finData.data, missingFinancials: finData.missing };
   } catch (err: any) {
     logDebug(`read-excel-data error: ${err.message}`);
@@ -278,7 +330,7 @@ ipcMain.handle('read-excel-data', async (_, filePath?: string) => {
 ipcMain.handle('generate-ppt', async (_, data: any) => {
   logDebug(`generate-ppt called with data for: ${data.corp_name}`);
   try {
-    const templatePath = join(process.env.PUBLIC!, 'templates/Deal_Summary_Template_1.0/deal-summary.pptx');
+    const templatePath = join(getTemplateDir(), 'deal-summary.pptx');
     const outputDir = app.getPath('downloads');
     const fileName = `Deal_Summary_${data.corp_name}_${new Date().getTime()}.pptx`;
     const outputPath = join(outputDir, fileName);

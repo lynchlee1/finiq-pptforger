@@ -1,6 +1,6 @@
 import React from "react";
-import { ChevronLeft, Plus, Trash2 } from "lucide-react";
-import { DEFAULT_SYSTEM_PROMPT, DEFAULT_FEW_SHOT, DEFAULT_SYSTEM_PROMPT_PRICE, DEFAULT_FEW_SHOT_PRICE, DEFAULT_SYSTEM_PROMPT_RISK, DEFAULT_FEW_SHOT_RISK } from "../utils/constants";
+import { ChevronLeft, FolderOpen, Plus, Trash2 } from "lucide-react";
+import { DEFAULT_SYSTEM_PROMPT, DEFAULT_CUSTOM_PROMPT, DEFAULT_FEW_SHOT, DEFAULT_SYSTEM_PROMPT_PRICE, DEFAULT_CUSTOM_PROMPT_PRICE, DEFAULT_FEW_SHOT_PRICE, DEFAULT_SYSTEM_PROMPT_RISK, DEFAULT_CUSTOM_PROMPT_RISK, DEFAULT_FEW_SHOT_RISK } from "../utils/constants";
 import { FewShotEditor } from "./FewShotEditor";
 
 interface Props {
@@ -25,6 +25,17 @@ const autoResizeTextarea = (el: HTMLTextAreaElement | null) => {
 export const SettingsModals: React.FC<Props> = ({ isPromptOpen, setIsPromptOpen, isSettingsOpen, setIsSettingsOpen, geminiAPI }) => {
   const [activePromptTab, setActivePromptTab] = React.useState<"investment" | "price" | "risk">("investment");
   const [previewPrompt, setPreviewPrompt] = React.useState<string | null>(null);
+  const [templateDir, setTemplateDir] = React.useState("");
+  const [templateDirStatus, setTemplateDirStatus] = React.useState("");
+
+  React.useEffect(() => {
+    if (!isSettingsOpen) return;
+
+    window.electronAPI.getTemplateDir().then((result) => {
+      setTemplateDir(result.templateDir);
+      setTemplateDirStatus("");
+    });
+  }, [isSettingsOpen]);
 
   const ListEditor = ({ items, onChange, placeholder, inputType = "text", label, addButtonText = "Add", bgClass = "bg-slate-50", borderClass = "border-slate-200" }: any) => {
     return (
@@ -70,15 +81,15 @@ export const SettingsModals: React.FC<Props> = ({ isPromptOpen, setIsPromptOpen,
     if (window.confirm("현재 탭의 설정을 기본값으로 초기화하시겠습니까?")) {
       if (activePromptTab === "investment") {
         geminiAPI.updateSystemPrompt(DEFAULT_SYSTEM_PROMPT);
-        geminiAPI.updateCustomPrompt("");
+        geminiAPI.updateCustomPrompt(DEFAULT_CUSTOM_PROMPT);
         geminiAPI.updateFewShot(DEFAULT_FEW_SHOT);
       } else if (activePromptTab === "price") {
         geminiAPI.updateSystemPromptPrice(DEFAULT_SYSTEM_PROMPT_PRICE);
-        geminiAPI.updateCustomPromptPrice("");
+        geminiAPI.updateCustomPromptPrice(DEFAULT_CUSTOM_PROMPT_PRICE);
         geminiAPI.updateFewShotPrice(DEFAULT_FEW_SHOT_PRICE);
       } else if (activePromptTab === "risk") {
         geminiAPI.updateSystemPromptRisk(DEFAULT_SYSTEM_PROMPT_RISK);
-        geminiAPI.updateCustomPromptRisk("");
+        geminiAPI.updateCustomPromptRisk(DEFAULT_CUSTOM_PROMPT_RISK);
         geminiAPI.updateFewShotRisk(DEFAULT_FEW_SHOT_RISK);
       }
     }
@@ -100,6 +111,32 @@ export const SettingsModals: React.FC<Props> = ({ isPromptOpen, setIsPromptOpen,
       if (geminiAPI.fewShotRisk) basePrompt += `\n\n[### Examples]\n${geminiAPI.fewShotRisk.trim()}`;
     }
     setPreviewPrompt(basePrompt);
+  };
+
+  const saveTemplateDir = async () => {
+    const result = await window.electronAPI.setTemplateDir(templateDir);
+    if (result.success) {
+      setTemplateDir(result.templateDir || templateDir);
+      setTemplateDirStatus("저장됨");
+      return true;
+    } else {
+      setTemplateDirStatus(result.error || "저장 실패");
+      return false;
+    }
+  };
+
+  const handleSelectTemplateDir = async () => {
+    const result = await window.electronAPI.selectTemplateDir();
+    if (!result.canceled && result.templateDir) {
+      setTemplateDir(result.templateDir);
+      setTemplateDirStatus("저장됨");
+    }
+  };
+
+  const handleCloseSettings = async () => {
+    if (await saveTemplateDir()) {
+      setIsSettingsOpen(false);
+    }
   };
 
   const renderPromptModal = () => {
@@ -204,6 +241,33 @@ export const SettingsModals: React.FC<Props> = ({ isPromptOpen, setIsPromptOpen,
             <button onClick={() => setIsSettingsOpen(false)} className="text-slate-400 hover:text-slate-600 p-1"><ChevronLeft className="w-6 h-6 rotate-180" /></button>
           </div>
           <div className="space-y-4">
+            <div className="space-y-2">
+              <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Template Folder</label>
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={templateDir}
+                  onChange={(e) => {
+                    setTemplateDir(e.target.value);
+                    setTemplateDirStatus("");
+                  }}
+                  onBlur={saveTemplateDir}
+                  placeholder="Folder containing deal-summary.pptx and Model.xlsx"
+                  className="flex-1 bg-slate-50 border border-slate-200 rounded-xl p-3 text-[13px] focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/50 transition-all"
+                />
+                <button
+                  onClick={handleSelectTemplateDir}
+                  className="px-4 bg-slate-100 text-slate-600 hover:bg-slate-200 rounded-xl transition-all"
+                  title="템플릿 폴더 선택"
+                >
+                  <FolderOpen className="w-5 h-5" />
+                </button>
+              </div>
+              <p className={`text-[10px] px-1 ${templateDirStatus.includes("실패") || templateDirStatus.includes("not found") ? "text-red-500" : "text-slate-400"}`}>
+                {templateDirStatus || "이 폴더의 deal-summary.pptx와 Model.xlsx를 사용합니다."}
+              </p>
+            </div>
+
             <ListEditor
               label="Google AI Studio API Keys (Fallback 순서대로 시도)"
               items={geminiAPI.apiKeys}
@@ -263,7 +327,7 @@ export const SettingsModals: React.FC<Props> = ({ isPromptOpen, setIsPromptOpen,
               </button>
             </div>
           </div>
-          <button onClick={() => setIsSettingsOpen(false)} className="w-full py-4 bg-primary text-white rounded-xl font-bold hover:bg-blue-700 transition-all">Close & Save</button>
+          <button onClick={handleCloseSettings} className="w-full py-4 bg-primary text-white rounded-xl font-bold hover:bg-blue-700 transition-all">Close & Save</button>
         </div>
       </div>
     );

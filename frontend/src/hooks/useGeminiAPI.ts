@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { DEFAULT_SYSTEM_PROMPT, DEFAULT_FEW_SHOT, DEFAULT_SYSTEM_PROMPT_PRICE, DEFAULT_FEW_SHOT_PRICE, DEFAULT_SYSTEM_PROMPT_RISK, DEFAULT_FEW_SHOT_RISK } from "../utils/constants";
+import { DEFAULT_SYSTEM_PROMPT, DEFAULT_CUSTOM_PROMPT, DEFAULT_FEW_SHOT, DEFAULT_SYSTEM_PROMPT_PRICE, DEFAULT_CUSTOM_PROMPT_PRICE, DEFAULT_FEW_SHOT_PRICE, DEFAULT_SYSTEM_PROMPT_RISK, DEFAULT_CUSTOM_PROMPT_RISK, DEFAULT_FEW_SHOT_RISK } from "../utils/constants";
 
 export function useGeminiAPI() {
   const [apiKeys, setApiKeys] = useState<string[]>(() => {
@@ -19,16 +19,16 @@ export function useGeminiAPI() {
   const [isDebugMode, setIsDebugMode] = useState(() => localStorage.getItem("gemini_debug_mode") === "true");
   const [useSearchGrounding, setUseSearchGrounding] = useState<boolean>(() => localStorage.getItem("gemini_use_search_grounding") !== "false");
   
-  const [customSystemPrompt, setCustomSystemPrompt] = useState(() => localStorage.getItem("gemini_custom_prompt") || "");
+  const [customSystemPrompt, setCustomSystemPrompt] = useState(() => localStorage.getItem("gemini_custom_prompt") || DEFAULT_CUSTOM_PROMPT);
   const [systemPrompt, setSystemPrompt] = useState(() => localStorage.getItem("gemini_system_prompt") || DEFAULT_SYSTEM_PROMPT);
   const [fewShotExamples, setFewShotExamples] = useState(() => localStorage.getItem("gemini_few_shot") || DEFAULT_FEW_SHOT);
 
   const [systemPromptPrice, setSystemPromptPrice] = useState(() => localStorage.getItem("gemini_system_prompt_price") || DEFAULT_SYSTEM_PROMPT_PRICE);
-  const [customPromptPrice, setCustomPromptPrice] = useState(() => localStorage.getItem("gemini_custom_prompt_price") || "");
+  const [customPromptPrice, setCustomPromptPrice] = useState(() => localStorage.getItem("gemini_custom_prompt_price") || DEFAULT_CUSTOM_PROMPT_PRICE);
   const [fewShotPrice, setFewShotPrice] = useState(() => localStorage.getItem("gemini_few_shot_price") || DEFAULT_FEW_SHOT_PRICE);
 
   const [systemPromptRisk, setSystemPromptRisk] = useState(() => localStorage.getItem("gemini_system_prompt_risk") || DEFAULT_SYSTEM_PROMPT_RISK);
-  const [customPromptRisk, setCustomPromptRisk] = useState(() => localStorage.getItem("gemini_custom_prompt_risk") || "");
+  const [customPromptRisk, setCustomPromptRisk] = useState(() => localStorage.getItem("gemini_custom_prompt_risk") || DEFAULT_CUSTOM_PROMPT_RISK);
   const [fewShotRisk, setFewShotRisk] = useState(() => localStorage.getItem("gemini_few_shot_risk") || DEFAULT_FEW_SHOT_RISK);
 
   
